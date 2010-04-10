@@ -569,6 +569,7 @@ static void updateSlavesWaitingBgsave(int bgsaveerr);
 static void freeMemoryIfNeeded(void);
 static int processCommand(redisClient *c);
 static void setupSigSegvAction(void);
+static void setupSigTermAction(void);
 static void rdbRemoveTempFile(pid_t childpid);
 static void aofRemoveTempFile(pid_t childpid);
 static size_t stringObjectLen(robj *o);
@@ -1640,6 +1641,7 @@ static void initServer() {
     server.stat_expiredkeys = 0;
     server.stat_starttime = time(NULL);
     server.unixtime = time(NULL);
+    setupSigTermAction();
     aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL);
     if (aeCreateFileEvent(server.el, server.fd, AE_READABLE,
         acceptHandler, NULL) == AE_ERR) oom("creating file event");
@@ -9808,6 +9810,34 @@ static void setupSigSegvAction(void) {
     sigaction (SIGFPE, &act, NULL);
     sigaction (SIGILL, &act, NULL);
     sigaction (SIGBUS, &act, NULL);
+    return;
+}
+
+static void termHandler(int sig) {
+    redisLog(REDIS_NOTICE,
+             "Redis %s received signal -%d-",
+             REDIS_VERSION, sig);
+    if (server.bgsavechildpid != -1) {
+        redisLog(REDIS_WARNING,
+                 "Background saving already in progress");
+        return;
+    }
+
+    if (rdbSave(server.dbfilename) == REDIS_OK) {
+        exit(0);
+    } else {
+        exit(1);
+    }
+}
+
+static void setupSigTermAction(void) {
+    struct sigaction act;
+
+    sigemptyset (&act.sa_mask);
+    act.sa_flags = SA_RESETHAND;
+    act.sa_handler = termHandler;
+    sigaction (SIGTERM, &act, NULL);
+    sigaction (SIGINT, &act, NULL);
     return;
 }
 
